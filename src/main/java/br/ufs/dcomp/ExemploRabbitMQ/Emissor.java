@@ -10,7 +10,13 @@ public class Emissor {
 
   public static void main(String[] argv) throws Exception {
     ConnectionFactory factory = new ConnectionFactory();
-    factory.setUri("amqp://...");
+    
+    // factory.setUri("amqp://...");
+    factory.setUsername("sieghart");
+    factory.setPassword("rabbit");
+    factory.setHost("ec2-52-87-153-195.compute-1.amazonaws.com");
+    factory.setVirtualHost("/");
+    
     Connection connection = factory.newConnection();
     Channel channel = connection.createChannel();
 
