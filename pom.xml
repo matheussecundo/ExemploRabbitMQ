@@ -14,7 +14,7 @@
           <archive>
             <manifest>
               <mainClass>
-                br.ufs.dcomp.ExemploRabbitMQ.Receptor
+                br.ufs.dcomp.ExemploRabbitMQ.Client
               </mainClass>
             </manifest>
           </archive>
@@ -50,6 +50,11 @@
        <groupId>org.slf4j</groupId>
        <artifactId>slf4j-simple</artifactId>
        <version>1.7.25</version>
+   </dependency>
+   <dependency>
+    <groupId>org.json</groupId>
+    <artifactId>json</artifactId>
+    <version>20201115</version>
    </dependency>
   </dependencies>
 </project>

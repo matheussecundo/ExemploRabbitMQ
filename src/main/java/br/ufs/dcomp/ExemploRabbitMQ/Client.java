@@ -9,6 +9,8 @@ import java.util.Scanner;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
+import org.json.JSONObject;
+
 // mvn exec:java -D exec.mainClass=br.ufs.dcomp.ExemploRabbitMQ.Client
 // mvn compile assembly:single
 // java -jar target/Client.jar
@@ -44,12 +46,17 @@ public class Client {
       }
 
       if (readed.contains("@")) {
-        channelName = readed.replace("@", "");
+        channelName = readed.replace("@", "").trim();
 
         channel = declareQueue(connection, channelName);
       } else {
         if (channel != null) {
-          channel.basicPublish("", channelName, null, readed.getBytes("UTF-8"));
+          
+          JSONObject obj = new JSONObject();
+          obj.put("username", username);
+          obj.put("message", readed);
+
+          channel.basicPublish("", channelName, null, obj.toString().getBytes());
         }
       }
       
@@ -68,13 +75,13 @@ public class Client {
       System.out.print(">>");
     }
     
-    return keyboard.nextLine().trim();
+    return keyboard.nextLine();
   }
 
   private static Channel declareQueue(Connection connection, String queue) throws IOException {
     Channel channel = connection.createChannel();
 
-    channel.queueDeclare(queue, false, false, false, null);
+    channel.queueDeclare(queue, false, false, true, null);
 
     new Thread() {
       @Override
@@ -96,13 +103,18 @@ public class Client {
       public void handleDelivery(String consumerTag, Envelope envelope, AMQP.BasicProperties properties, byte[] body) throws IOException {
 
         String message = new String(body, "UTF-8");
-        DateTimeFormatter dateFormater = DateTimeFormatter.ofPattern("yyyy/MM/dd às HH:mm");
-        System.out.print("(" + LocalDateTime.now().format(dateFormater) + ") " + queue + " diz: " + message);
+        
+        JSONObject obj = new JSONObject(message);
 
+        DateTimeFormatter dateFormater = DateTimeFormatter.ofPattern("yyyy/MM/dd");
+        DateTimeFormatter timeFormater = DateTimeFormatter.ofPattern("HH:mm");
+        LocalDateTime datetime = LocalDateTime.now();
+
+        System.out.print("\n(" + datetime.format(dateFormater) + " ás " + datetime.format(timeFormater) + ") ");
+        System.out.print((String) obj.get("username") + " diz: " + (String) obj.get("message"));
+        System.out.print("\n@" + channelName + ">>");
       }
     };
-
-    System.out.println(" [*] Esperando recebimento de mensagens...");
 
     return channel.basicConsume(queue, true, consumer);
   }
