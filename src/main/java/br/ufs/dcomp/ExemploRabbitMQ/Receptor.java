@@ -9,6 +9,8 @@ import java.util.Scanner;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
+// mvn exec:java -D exec.mainClass=br.ufs.dcomp.ExemploRabbitMQ.Receptor
+
 public class Receptor {
 
   private static String username;
