@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package RabbitChat;
+
+import "google/protobuf/timestamp.proto";
+
+option java_package = "br.ufs.dcomp.RabbitChat";
+option java_outer_classname = "Proto";
+
+message Message {
+    string emiter = 1;
+    google.protobuf.Timestamp timestamp = 2;
+    string group = 3;
+    Content content = 4;
+}
+
+message Content {
+    string type = 1;
+    bytes body = 2;
+    string name = 3;
+}
