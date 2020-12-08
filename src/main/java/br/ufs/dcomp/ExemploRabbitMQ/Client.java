@@ -37,8 +37,10 @@ public class Client {
         });
 
         while (true) {
-            if (chat.isQueueConnected()) {
-                System.out.print("@" + chat.getQueueName() + ">>");
+            if (chat.getQueue() != null) {
+                System.out.print("@" + chat.getQueue() + ">>");
+            } else if (chat.getGroup() != null) {
+                System.out.print("#" + chat.getGroup() + ">>");
             } else {
                 System.out.print(">>");
             }
@@ -50,10 +52,22 @@ public class Client {
             }
 
             if (readed.contains("@")) {
-                String queueName = readed.replace("@", "").trim();
-                chat.setQueue(queueName);
+                String name = readed.replace("@", "").trim();
+                chat.declareQueue(name);
+            } else if (readed.contains("#")) {
+                String name = readed.replace("#", "").trim();
+                chat.declareGroup(name);
+            } else if (readed.contains("!addUser")) {
+                String[] split = readed.split(" ");
+                chat.addUserToGroup(split[1], split[2]);
+            } else if (readed.contains("!delFromGroup")) {
+                String[] split = readed.split(" ");
+                chat.removeUserFromGroup(split[1], split[2]);
+            } else if (readed.contains("!removeGroup")) {
+                String[] split = readed.split(" ");
+                chat.removeGroup(split[1]);
             } else {
-                if (chat.isQueueConnected()) {
+                if (chat.getQueue() != null || chat.getGroup() != null) {
                     chat.sendMessage(readed);
                 }
             }
@@ -80,6 +94,8 @@ public class Client {
                 zoneOffset
             );
 
+            boolean isGroup = x.getGroup() != null;
+
             System.out.println(
                 "("
                 +
@@ -89,8 +105,8 @@ public class Client {
                 +
                 dateTime.format(DateTimeFormatter.ofPattern("HH:mm"))
                 +
-                ")"
-                + " " + x.getEmiter() + " diz " + x.getContent().getBody()
+                ") "
+                +  x.getEmiter() + (isGroup ? "#" + x.getGroup() : "") + " diz " + x.getContent().getBody()
             );
         }
 
