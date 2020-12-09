@@ -6,18 +6,17 @@ package br.ufs.dcomp.ExemploRabbitMQ;
 // ssh -i rabbit-key.pem ubuntu@18.209.225.188
 
 import java.util.Scanner;
-
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
-import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+
 import br.ufs.dcomp.RabbitChat.Proto;
 
 public class Client {
 
-    static ArrayList<Proto.Message> messages;
-    static ZoneOffset zoneOffset = ZoneOffset.of(ZoneId.systemDefault().getId());
+    static ArrayList<Proto.Message> messages = new ArrayList<>();
     static RabbitChat chat;
 
     public static void main(String[] argv) throws Exception {
@@ -27,10 +26,16 @@ public class Client {
         String username = keyboard.nextLine();
 
         chat = new RabbitChat(
-                RabbitChat.makeConnection("sieghart", "rabbit", "ec2-52-87-217-20.compute-1.amazonaws.com", "/"),
+                RabbitChat.makeConnection("sieghart", "rabbit", "ec2-107-22-143-243.compute-1.amazonaws.com", "/"),
                 username);
 
-        chat.onNewMessage((Proto.Message message) -> {
+        chat.onMessageSended((Proto.Message message) -> {
+            messages.add(message);
+
+            printPrompt();
+        });
+
+        chat.onMessageReceived((Proto.Message message) -> {
             messages.add(message);
 
             printPrompt();
@@ -48,6 +53,7 @@ public class Client {
             String readed = keyboard.nextLine();
 
             if (readed.equals("exit")) {
+                System.exit(0);
                 break;
             }
 
@@ -56,7 +62,10 @@ public class Client {
                 chat.declareQueue(name);
             } else if (readed.contains("#")) {
                 String name = readed.replace("#", "").trim();
-                chat.declareGroup(name);
+                chat.setGroup(name);
+            } else if (readed.contains("!addGroup")) {
+                String[] split = readed.split(" ");
+                chat.declareGroup(split[1]);
             } else if (readed.contains("!addUser")) {
                 String[] split = readed.split(" ");
                 chat.addUserToGroup(split[1], split[2]);
@@ -87,29 +96,39 @@ public class Client {
             System.out.println(e);
         }
 
-        for (Proto.Message x : messages) {                
-            LocalDateTime dateTime = LocalDateTime.ofEpochSecond(
-                x.getTimestamp().getSeconds(),
-                x.getTimestamp().getNanos(),
-                zoneOffset
-            );
-
-            boolean isGroup = x.getGroup() != null;
-
-            System.out.println(
-                "("
-                +
-                dateTime.format(DateTimeFormatter.ofPattern("yyyy/MM/dd"))
-                +
-                " as "
-                +
-                dateTime.format(DateTimeFormatter.ofPattern("HH:mm"))
-                +
-                ") "
-                +  x.getEmiter() + (isGroup ? "#" + x.getGroup() : "") + " diz " + x.getContent().getBody()
-            );
+        for (Proto.Message x : messages) {      
+            printMessage(x);
         }
 
-        System.out.print("@" + chat.getQueueName() + ">>");
+        if (chat.getQueue() != null) {
+            System.out.print("@" + chat.getQueue() + ">>");
+        } else if (chat.getGroup() != null) {
+            System.out.print("#" + chat.getGroup() + ">>");
+        } else {
+            System.out.print(">>");
+        }
+    }
+
+    static private void printMessage(Proto.Message message)
+    {
+        LocalDateTime dateTime = LocalDateTime.ofInstant(
+            Instant.ofEpochSecond(message.getTimestamp().getSeconds()),
+            ZoneId.systemDefault()
+        );
+
+        boolean isGroup = message.getGroup() != null && message.getGroup().length() != 0;
+
+        System.out.println(
+            "("
+            +
+            dateTime.format(DateTimeFormatter.ofPattern("dd/MM/yyyy"))
+            +
+            " as "
+            +
+            dateTime.format(DateTimeFormatter.ofPattern("HH:mm"))
+            +
+            ") "
+            +  message.getEmiter() + (isGroup ? "#" + message.getGroup() : "") + " diz: " + message.getContent().getBody().toStringUtf8()
+        );
     }
 }

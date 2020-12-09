@@ -21,7 +21,9 @@ public class RabbitChat
     private String _username;
     private String _queueName;
     private String _groupName;
-    private java.util.function.Consumer<Proto.Message> _newMessageCallback;
+    private java.util.function.Consumer<Proto.Message> _onMessageSendedCallback;
+    private java.util.function.Consumer<Proto.Message> _onMessageReceivedCallback;
+    private Thread CONSUMER_THREAD;
 
     public RabbitChat(Connection connection, String username) throws IOException
     {
@@ -32,7 +34,7 @@ public class RabbitChat
 
         _channel.queueDeclare(_username, false, false, true, null);
 
-        new Thread() {
+        CONSUMER_THREAD = new Thread() {
             @Override
             public void run() {
                 try {
@@ -41,7 +43,8 @@ public class RabbitChat
                     System.out.println(error);
                 }
             }
-        }.start();
+        };
+        CONSUMER_THREAD.start();
     }
     
     public static Connection makeConnection(String username, String password, String host, String virtualHost) throws IOException, TimeoutException
@@ -83,6 +86,10 @@ public class RabbitChat
             .build();
 
         _channel.basicPublish("", _queueName, null, toSend.toByteArray());
+
+        if (_onMessageSendedCallback != null) {
+            _onMessageSendedCallback.accept(toSend);
+        }
     }
 
     private void sendMessageToGroup(String message) throws IOException
@@ -105,12 +112,16 @@ public class RabbitChat
             .build();
 
         _channel.basicPublish(_groupName, "", null, toSend.toByteArray());
+
+        if (_onMessageSendedCallback != null) {
+            _onMessageSendedCallback.accept(toSend);
+        }
     }
 
     public Queue.DeclareOk declareQueue(String queueName) throws IOException
     {
         Queue.DeclareOk ok = _channel.queueDeclare(queueName, false, false, true, null);
-        _queueName = queueName;
+        setQueue(queueName);
         return ok;
     }
 
@@ -118,8 +129,20 @@ public class RabbitChat
     {
         Exchange.DeclareOk ok = _channel.exchangeDeclare(groupName, "fanout");
         addUserToGroup(_username, groupName);
-        _groupName = groupName;
+        setGroup(groupName);
         return ok;
+    }
+
+    public void setQueue(String queueName)
+    {
+        _queueName = queueName;
+        _groupName = null;
+    }
+
+    public void setGroup(String groupName)
+    {
+        _groupName = groupName;
+        _queueName = null;
     }
 
     public Queue.BindOk addUserToGroup(String username, String groupName) throws IOException
@@ -145,18 +168,23 @@ public class RabbitChat
             {
                 Proto.Message message = Proto.Message.parseFrom(body);
 
-                if (_newMessageCallback != null) {
-                    _newMessageCallback.accept(message);
+                if (_onMessageReceivedCallback != null) {
+                    _onMessageReceivedCallback.accept(message);
                 }
             }
         };
       
         return _channel.basicConsume(_username, true, consumer);
     }
-    
-    public void onNewMessage(java.util.function.Consumer<Proto.Message> newMessageCallback)
+
+    public void onMessageSended(java.util.function.Consumer<Proto.Message> onMessageSendedCallback)
     {
-        _newMessageCallback = newMessageCallback;
+        _onMessageSendedCallback = onMessageSendedCallback;
+    }
+    
+    public void onMessageReceived(java.util.function.Consumer<Proto.Message> onMessageReceivedCallback)
+    {
+        _onMessageReceivedCallback = onMessageReceivedCallback;
     }
 
     public String getQueue()
