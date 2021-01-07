@@ -6,6 +6,8 @@ package br.ufs.dcomp.ExemploRabbitMQ;
 // ssh -i rabbit-key.pem ubuntu@18.209.225.188
 
 import java.util.Scanner;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -16,7 +18,7 @@ import br.ufs.dcomp.RabbitChat.Proto;
 
 public class Client {
 
-    static ArrayList<Proto.Message> messages = new ArrayList<>();
+    static ArrayList<String> log = new ArrayList<>();
     static RabbitChat chat;
 
     public static void main(String[] argv) throws Exception {
@@ -26,26 +28,52 @@ public class Client {
         String username = keyboard.nextLine();
 
         chat = new RabbitChat(
-                RabbitChat.makeConnection("sieghart", "rabbit", "ec2-107-22-143-243.compute-1.amazonaws.com", "/"),
+                RabbitChat.makeConnection("sieghart", "rabbit", "ec2-18-204-7-69.compute-1.amazonaws.com", "/"),
                 username);
 
         chat.onMessageSended((Proto.Message message) -> {
-            messages.add(message);
+            log.add(messageToString(message));
 
             printPrompt();
         });
 
         chat.onMessageReceived((Proto.Message message) -> {
-            messages.add(message);
+            log.add(messageToString(message));
 
             printPrompt();
         });
 
+        chat.onFileSended((Proto.Message message) -> {
+            log.add("Arquivo \"" + message.getContent().getName() + "\" para " + destinatary() + " !");
+
+            printPrompt();
+        });
+
+        chat.onFileReceived((Proto.Message message) -> {
+            File file = new File(message.getTimestamp().getSeconds()+"_"+message.getContent().getName());
+            
+            try {
+                if (file.createNewFile()) {
+                    try (FileOutputStream fos = new FileOutputStream(file, false)) {
+                        byte[] bytes = message.getContent().getBody().toByteArray();
+                        fos.write(bytes);
+                        fos.close();
+
+                        log.add(messageToString(message));
+
+                        printPrompt();
+                    }
+                } else {
+                    System.out.println("File already exists.");
+                }
+            } catch (Exception e) {
+                System.out.println(e);
+            }
+        });
+
         while (true) {
-            if (chat.getQueue() != null) {
-                System.out.print("@" + chat.getQueue() + ">>");
-            } else if (chat.getGroup() != null) {
-                System.out.print("#" + chat.getGroup() + ">>");
+            if (chat.getQueue() != null || chat.getGroup() != null) {
+                System.out.print(destinatary() + ">>");
             } else {
                 System.out.print(">>");
             }
@@ -59,22 +87,40 @@ public class Client {
 
             if (readed.contains("@")) {
                 String name = readed.replace("@", "").trim();
-                chat.declareQueue(name);
+
+                chat.declareUser(name);
             } else if (readed.contains("#")) {
                 String name = readed.replace("#", "").trim();
+
                 chat.setGroup(name);
             } else if (readed.contains("!addGroup")) {
                 String[] split = readed.split(" ");
+
                 chat.declareGroup(split[1]);
             } else if (readed.contains("!addUser")) {
                 String[] split = readed.split(" ");
+
                 chat.addUserToGroup(split[1], split[2]);
             } else if (readed.contains("!delFromGroup")) {
                 String[] split = readed.split(" ");
+
                 chat.removeUserFromGroup(split[1], split[2]);
             } else if (readed.contains("!removeGroup")) {
                 String[] split = readed.split(" ");
+
                 chat.removeGroup(split[1]);
+            } else if (readed.contains("!upload")) {
+                int index = readed.indexOf("!upload") + "!upload".length();
+                String filename = readed.substring(index).trim();
+                
+                try {
+                    chat.sendFile(filename);
+
+                    log.add("Enviando \"" + filename + "\" para " + destinatary() + ".");
+                    printPrompt();
+                } catch (Exception e) {
+                    System.out.println(e);
+                }
             } else {
                 if (chat.getQueue() != null || chat.getGroup() != null) {
                     chat.sendMessage(readed);
@@ -85,7 +131,7 @@ public class Client {
         keyboard.close();
     }
 
-    static private void printPrompt() {
+    private static void printPrompt() {
         try {
             if (System.getProperty("os.name").contains("Windows")) {
                 new ProcessBuilder("cmd", "/c", "cls").inheritIO().start().waitFor();
@@ -96,20 +142,18 @@ public class Client {
             System.out.println(e);
         }
 
-        for (Proto.Message x : messages) {      
-            printMessage(x);
+        for (String x : log) {      
+            System.out.println(x);
         }
 
-        if (chat.getQueue() != null) {
-            System.out.print("@" + chat.getQueue() + ">>");
-        } else if (chat.getGroup() != null) {
-            System.out.print("#" + chat.getGroup() + ">>");
+        if (chat.getQueue() != null || chat.getGroup() != null) {
+            System.out.print(destinatary() + ">>");
         } else {
             System.out.print(">>");
         }
     }
 
-    static private void printMessage(Proto.Message message)
+    private static String messageToString(Proto.Message message)
     {
         LocalDateTime dateTime = LocalDateTime.ofInstant(
             Instant.ofEpochSecond(message.getTimestamp().getSeconds()),
@@ -118,7 +162,21 @@ public class Client {
 
         boolean isGroup = message.getGroup() != null && message.getGroup().length() != 0;
 
-        System.out.println(
+        if (!message.getContent().getName().isEmpty()) {
+            return
+                "("
+                +
+                dateTime.format(DateTimeFormatter.ofPattern("dd/MM/yyyy"))
+                +
+                " as "
+                +
+                dateTime.format(DateTimeFormatter.ofPattern("HH:mm"))
+                +
+                ") "
+                +  "Arquivo \"" + message.getContent().getName() + "\" recebido de @" + message.getEmiter() + " !";   
+        }
+
+        return
             "("
             +
             dateTime.format(DateTimeFormatter.ofPattern("dd/MM/yyyy"))
@@ -128,7 +186,17 @@ public class Client {
             dateTime.format(DateTimeFormatter.ofPattern("HH:mm"))
             +
             ") "
-            +  message.getEmiter() + (isGroup ? "#" + message.getGroup() : "") + " diz: " + message.getContent().getBody().toStringUtf8()
-        );
+            +  message.getEmiter() + (isGroup ? "#" + message.getGroup() : "") + " diz: " + message.getContent().getBody().toStringUtf8();
+    }
+
+    private static String destinatary()
+    {
+        if (chat.getQueue() != null) {
+            return "@"+chat.getQueue();
+        }
+        if (chat.getGroup() != null) {
+            return "#"+chat.getGroup();
+        }
+        return null;
     }
 }

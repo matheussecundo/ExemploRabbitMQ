@@ -11,6 +11,9 @@ import com.google.protobuf.ByteString;
 import com.google.protobuf.Timestamp;
 
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.Instant;
 import java.util.concurrent.TimeoutException;
 
@@ -18,12 +21,16 @@ public class RabbitChat
 {
     private Connection _connection;
     private Channel _channel;
+    private Channel _fileChannel;
     private String _username;
     private String _queueName;
     private String _groupName;
     private java.util.function.Consumer<Proto.Message> _onMessageSendedCallback;
     private java.util.function.Consumer<Proto.Message> _onMessageReceivedCallback;
-    private Thread CONSUMER_THREAD;
+    private java.util.function.Consumer<Proto.Message> _onFileSendedCallback;
+    private java.util.function.Consumer<Proto.Message> _onFileReceivedCallback;
+    private Thread MESSAGE_CONSUMER_THREAD;
+    private Thread FILE_CONSUMER_THREAD;
 
     public RabbitChat(Connection connection, String username) throws IOException
     {
@@ -31,20 +38,59 @@ public class RabbitChat
         _username = username;
 
         _channel = _connection.createChannel();
-
         _channel.queueDeclare(_username, false, false, true, null);
 
-        CONSUMER_THREAD = new Thread() {
+        _fileChannel = _connection.createChannel();
+        _fileChannel.queueDeclare(_username + "-files", false, false, true, null);
+
+        MESSAGE_CONSUMER_THREAD = new Thread() {
             @Override
             public void run() {
                 try {
-                    consumeMessages();
+                    Consumer consumer = new DefaultConsumer(_channel) {
+                        @Override
+                        public void handleDelivery(String consumerTag, Envelope envelope, AMQP.BasicProperties properties, byte[] body) throws IOException
+                        {
+                            Proto.Message message = Proto.Message.parseFrom(body);
+            
+                            if (_onMessageReceivedCallback != null) {
+                                _onMessageReceivedCallback.accept(message);
+                            }
+                        }
+                    };
+                  
+                    _channel.basicConsume(_username, true, consumer);
                 } catch (Exception error) {
                     System.out.println(error);
                 }
             }
         };
-        CONSUMER_THREAD.start();
+
+        FILE_CONSUMER_THREAD = new Thread() {
+            @Override
+            public void run() {
+                try {
+                    Consumer consumer = new DefaultConsumer(_fileChannel) {
+                        @Override
+                        public void handleDelivery(String consumerTag, Envelope envelope, AMQP.BasicProperties properties, byte[] body) throws IOException
+                        {
+                            Proto.Message message = Proto.Message.parseFrom(body);
+            
+                            if (_onFileReceivedCallback != null) {
+                                _onFileReceivedCallback.accept(message);
+                            }
+                        }
+                    };
+                  
+                    _fileChannel.basicConsume(_username + "-files", true, consumer);
+                } catch (Exception error) {
+                    System.out.println(error);
+                }
+            }
+        };
+
+        MESSAGE_CONSUMER_THREAD.start();
+        FILE_CONSUMER_THREAD.start();
     }
     
     public static Connection makeConnection(String username, String password, String host, String virtualHost) throws IOException, TimeoutException
@@ -60,18 +106,46 @@ public class RabbitChat
 
     public void sendMessage(String message) throws IOException
     {
+        Instant time = Instant.now();
+        
+        Proto.Message.Builder builder = Proto.Message.newBuilder()
+            .setEmiter(_username)
+            .setTimestamp(
+                Timestamp.newBuilder()
+                    .setSeconds(time.getEpochSecond())
+                    .setNanos(time.getNano())
+            )
+            .setContent(
+                Proto.Content.newBuilder()
+                    .setType("text/plain")
+                    .setBody(ByteString.copyFrom(message.getBytes()))
+            );
+        
         if (_groupName != null) {
-            sendMessageToGroup(message);
-        } else if (_queueName != null) {
-            sendMessageToUser(message);
+            builder = builder.setGroup(_groupName);
         }
+
+        Proto.Message toSend = builder.build();
+
+        Thread thread = sendToChannel(_channel, "", toSend.toByteArray(), () -> {
+            if (_onMessageSendedCallback != null) {
+                _onMessageSendedCallback.accept(toSend);
+            }
+        });
+
+        thread.start();
     }
 
-    private void sendMessageToUser(String message) throws IOException
+    public void sendFile(String filename) throws IOException
     {
-        Instant time = Instant.now();
+        Path source = Paths.get(filename);
+        String mime = Files.probeContentType(source);
+
+        byte[] bytes = Files.readAllBytes(source);
         
-        Proto.Message toSend = Proto.Message.newBuilder()
+        Instant time = Instant.now();
+
+        Proto.Message.Builder builder = Proto.Message.newBuilder()
             .setEmiter(_username)
             .setTimestamp(
                 Timestamp.newBuilder()
@@ -80,45 +154,27 @@ public class RabbitChat
             )
             .setContent(
                 Proto.Content.newBuilder()
-                    .setType("text/plain")
-                    .setBody(ByteString.copyFrom(message.getBytes()))
-            )
-            .build();
-
-        _channel.basicPublish("", _queueName, null, toSend.toByteArray());
-
-        if (_onMessageSendedCallback != null) {
-            _onMessageSendedCallback.accept(toSend);
-        }
-    }
-
-    private void sendMessageToGroup(String message) throws IOException
-    {
-        Instant time = Instant.now();
+                    .setType(mime)
+                    .setBody(ByteString.copyFrom(bytes))
+                    .setName(source.getFileName().toString())
+            );
         
-        Proto.Message toSend = Proto.Message.newBuilder()
-            .setEmiter(_username)
-            .setTimestamp(
-                Timestamp.newBuilder()
-                    .setSeconds(time.getEpochSecond())
-                    .setNanos(time.getNano())
-            )
-            .setGroup(_groupName)
-            .setContent(
-                Proto.Content.newBuilder()
-                    .setType("text/plain")
-                    .setBody(ByteString.copyFrom(message.getBytes()))
-            )
-            .build();
-
-        _channel.basicPublish(_groupName, "", null, toSend.toByteArray());
-
-        if (_onMessageSendedCallback != null) {
-            _onMessageSendedCallback.accept(toSend);
+        if (_groupName != null) {
+            builder = builder.setGroup(_groupName);
         }
+
+        Proto.Message toSend = builder.build();
+
+        Thread thread = sendToChannel(_fileChannel, "-files", toSend.toByteArray(), () -> {
+            if (_onFileSendedCallback != null) {
+                _onFileSendedCallback.accept(toSend);
+            }
+        });
+        
+        thread.start();        
     }
 
-    public Queue.DeclareOk declareQueue(String queueName) throws IOException
+    public Queue.DeclareOk declareUser(String queueName) throws IOException
     {
         Queue.DeclareOk ok = _channel.queueDeclare(queueName, false, false, true, null);
         setQueue(queueName);
@@ -160,21 +216,25 @@ public class RabbitChat
         return _channel.exchangeDelete(groupName);
     }
 
-    private String consumeMessages() throws IOException
+    private Thread sendToChannel(Channel channel, String posfix, byte[] bytes, Runnable callback)
     {
-        Consumer consumer = new DefaultConsumer(_channel) {
+        return new Thread() {
             @Override
-            public void handleDelivery(String consumerTag, Envelope envelope, AMQP.BasicProperties properties, byte[] body) throws IOException
-            {
-                Proto.Message message = Proto.Message.parseFrom(body);
-
-                if (_onMessageReceivedCallback != null) {
-                    _onMessageReceivedCallback.accept(message);
+            public void run() {
+                try {
+                    if (_groupName != null) {
+                        channel.basicPublish(_groupName + posfix, "", null, bytes);
+                    } else if (_queueName != null) {
+                        channel.basicPublish("", _queueName + posfix, null, bytes);
+                    }
+                    if (callback != null) {
+                        callback.run();
+                    }
+                } catch (Exception error) {
+                    System.out.println(error);
                 }
             }
         };
-      
-        return _channel.basicConsume(_username, true, consumer);
     }
 
     public void onMessageSended(java.util.function.Consumer<Proto.Message> onMessageSendedCallback)
@@ -185,6 +245,16 @@ public class RabbitChat
     public void onMessageReceived(java.util.function.Consumer<Proto.Message> onMessageReceivedCallback)
     {
         _onMessageReceivedCallback = onMessageReceivedCallback;
+    }
+
+    public void onFileSended(java.util.function.Consumer<Proto.Message> onFileSendedCallback)
+    {
+        _onFileSendedCallback = onFileSendedCallback;
+    }
+    
+    public void onFileReceived(java.util.function.Consumer<Proto.Message> onFileReceivedCallback)
+    {
+        _onFileReceivedCallback = onFileReceivedCallback;
     }
 
     public String getQueue()
