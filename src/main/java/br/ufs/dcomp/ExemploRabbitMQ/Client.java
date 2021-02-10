@@ -28,7 +28,7 @@ public class Client {
         String username = keyboard.nextLine();
 
         chat = new RabbitChat(
-                RabbitChat.makeConnection("sieghart", "rabbit", "ec2-18-204-7-69.compute-1.amazonaws.com", "/"),
+                RabbitChat.makeConnection(RabbitChat.USERNAME, RabbitChat.PASSWORD, RabbitChat.HOSTNAME, RabbitChat.VHOST),
                 username);
 
         chat.onMessageSended((Proto.Message message) -> {
@@ -44,7 +44,7 @@ public class Client {
         });
 
         chat.onFileSended((Proto.Message message) -> {
-            log.add("Arquivo \"" + message.getContent().getName() + "\" para " + destinatary() + " !");
+            log.add("Arquivo \"" + message.getContent().getName() + "\" foi enviado para " + destinatary() + "!");
 
             printPrompt();
         });
@@ -64,7 +64,15 @@ public class Client {
                         printPrompt();
                     }
                 } else {
-                    System.out.println("File already exists.");
+                    try (FileOutputStream fos = new FileOutputStream(file, false)) {
+                        byte[] bytes = message.getContent().getBody().toByteArray();
+                        fos.write(bytes);
+                        fos.close();
+
+                        log.add(messageToString(message));
+
+                        printPrompt();
+                    }
                 }
             } catch (Exception e) {
                 System.out.println(e);
@@ -120,7 +128,16 @@ public class Client {
                     printPrompt();
                 } catch (Exception e) {
                     System.out.println(e);
+                    e.printStackTrace();
                 }
+            } else if (readed.contains("!listUsers")) {
+                String[] split = readed.split(" ");
+
+                String users = String.join(", ", chat.getUsers(split[1]));
+                System.out.println(users);
+            } else if (readed.contains("!listGroups")) {
+                String groups = String.join(", ", chat.getGroups());
+                System.out.println(groups);
             } else {
                 if (chat.getQueue() != null || chat.getGroup() != null) {
                     chat.sendMessage(readed);
@@ -173,7 +190,7 @@ public class Client {
                 dateTime.format(DateTimeFormatter.ofPattern("HH:mm"))
                 +
                 ") "
-                +  "Arquivo \"" + message.getContent().getName() + "\" recebido de @" + message.getEmiter() + " !";   
+                +  "Arquivo \"" + message.getContent().getName() + "\" recebido de @" + message.getEmiter() + "!";   
         }
 
         return
